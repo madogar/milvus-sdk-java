@@ -1,6 +1,7 @@
 package io.milvus.orm.iterator;
 
 import com.amazonaws.util.CollectionUtils;
+import com.amazonaws.util.StringUtils;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.google.common.collect.Lists;
 import io.milvus.common.utils.ExceptionUtils;
@@ -21,10 +22,12 @@ import io.milvus.v2.utils.RpcUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.ByteBuffer;
 import java.text.DecimalFormat;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedMap;
 
 import static io.milvus.param.Constant.DEFAULT_SEARCH_EXTENSION_RATE;
 import static io.milvus.param.Constant.EF;
@@ -51,7 +54,7 @@ public class SearchIterator {
     private int cacheId;
     private boolean initSuccess;
     private int returnedCount;
-    private double width;
+    private float width;
     private float tailBand;
 
     private List<Object> filteredIds;
@@ -137,8 +140,8 @@ public class SearchIterator {
 
     private void checkRmRangeSearchParameters() {
         if (params.containsKey(RADIUS) && params.containsKey(RANGE_FILTER)) {
-            float radius = (float) params.get(RADIUS);
-            float rangeFilter = (float) params.get(RANGE_FILTER);
+            float radius = getFloatValue(RADIUS);
+            float rangeFilter = getFloatValue(RANGE_FILTER);
             if (metricsPositiveRelated(metricType) && radius <= rangeFilter) {
                 String msg = String.format("for metrics:%s, radius must be larger than range_filter, please adjust your parameter", metricType);
                 ExceptionUtils.throwUnExpectedException(msg);
@@ -215,7 +218,7 @@ public class SearchIterator {
     }
 
     private SearchResultsWrapper executeNextSearch(Map<String, Object> params, String nextExpr, boolean toExtendBatch) {
-        SearchParam searchParam = SearchParam.newBuilder()
+        SearchParam.Builder searchParamBuilder = SearchParam.newBuilder()
                 .withDatabaseName(searchIteratorParam.getDatabaseName())
                 .withCollectionName(searchIteratorParam.getCollectionName())
                 .withPartitionNames(searchIteratorParam.getPartitionNames())
@@ -224,19 +227,46 @@ public class SearchIterator {
                 .withTopK(extendBatchSize(batchSize, toExtendBatch, params))
                 .withExpr(nextExpr)
                 .withOutFields(searchIteratorParam.getOutFields())
-                .withVectors(searchIteratorParam.getVectors())
                 .withRoundDecimal(searchIteratorParam.getRoundDecimal())
                 .withParams(JacksonUtils.toJsonString(params))
-                .withIgnoreGrowing(searchIteratorParam.isIgnoreGrowing())
-                .build();
+                .withMetricType(MetricType.valueOf(searchIteratorParam.getMetricType()))
+                .withIgnoreGrowing(searchIteratorParam.isIgnoreGrowing());
 
-        SearchRequest searchRequest = ParamUtils.convertSearchParam(searchParam);
+        if (!StringUtils.isNullOrEmpty(searchIteratorParam.getGroupByFieldName())) {
+            searchParamBuilder.withGroupByFieldName(searchIteratorParam.getGroupByFieldName());
+        }
+        fillVectorsByPlType(searchParamBuilder);
+
+        SearchRequest searchRequest = ParamUtils.convertSearchParam(searchParamBuilder.build());
         SearchResults response = blockingStub.search(searchRequest);
 
         String title = String.format("SearchRequest collectionName:%s", searchIteratorParam.getCollectionName());
         rpcUtils.handleResponse(title, response.getStatus());
 
         return new SearchResultsWrapper(response.getResults());
+    }
+
+    private void fillVectorsByPlType(SearchParam.Builder searchParamBuilder) {
+        switch (searchIteratorParam.getPlType()) {
+            case FloatVector:
+                searchParamBuilder.withFloatVectors((List<List<Float>>) searchIteratorParam.getVectors());
+                break;
+            case BinaryVector:
+                searchParamBuilder.withBinaryVectors((List<ByteBuffer>) searchIteratorParam.getVectors());
+                break;
+            case Float16Vector:
+                searchParamBuilder.withFloat16Vectors((List<ByteBuffer>) searchIteratorParam.getVectors());
+                break;
+            case BFloat16Vector:
+                searchParamBuilder.withBFloat16Vectors((List<ByteBuffer>) searchIteratorParam.getVectors());
+                break;
+            case SparseFloatVector:
+                searchParamBuilder.withSparseFloatVectors((List<SortedMap<Long, Float>>) searchIteratorParam.getVectors());
+                break;
+            default:
+                searchParamBuilder.withVectors(searchIteratorParam.getVectors());
+                break;
+        }
     }
 
     private int extendBatchSize(int batchSize, boolean toExtendBatchSize, Map<String, Object> nextParams) {
@@ -269,7 +299,7 @@ public class SearchIterator {
 
         if (width == 0.0) {
             // enable a minimum value for width to avoid radius and range_filter equal error
-            width = 0.05;
+            width = 0.05f;
         }
     }
 
@@ -357,16 +387,16 @@ public class SearchIterator {
         });
 
         if (metricsPositiveRelated(metricType)) {
-            double nextRadius = tailBand + width * coefficient;
-            if (params.containsKey(RADIUS) && nextRadius > (double) params.get(RADIUS)) {
-                nextParams.put(RADIUS, params.get(RADIUS));
+            float nextRadius = tailBand + width * coefficient;
+            if (params.containsKey(RADIUS) && nextRadius > getFloatValue(RADIUS)) {
+                nextParams.put(RADIUS, getFloatValue(RADIUS));
             } else {
                 nextParams.put(RADIUS, nextRadius);
             }
         } else {
             double nextRadius = tailBand - width * coefficient;
-            if (params.containsKey(RADIUS) && nextRadius < (double) params.get(RADIUS)) {
-                nextParams.put(RADIUS, params.get(RADIUS));
+            if (params.containsKey(RADIUS) && nextRadius < getFloatValue(RADIUS)) {
+                nextParams.put(RADIUS, getFloatValue(RADIUS));
             } else {
                 nextParams.put(RADIUS, nextRadius);
             }
@@ -427,5 +457,9 @@ public class SearchIterator {
     private String convertToStr(Object value) {
         DecimalFormat df = new DecimalFormat("0.0");
         return df.format(value);
+    }
+
+    private float getFloatValue(String key) {
+        return ((Double) params.get(key)).floatValue();
     }
 }

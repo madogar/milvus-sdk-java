@@ -61,6 +61,8 @@ public class ConnectParam {
     private final String serverPemPath;
     private final String serverName;
     private final List<ClientInterceptor> clientInterceptors;
+    private final String userName;
+
 
     protected ConnectParam(@NonNull Builder builder) {
         this.host = builder.host;
@@ -86,6 +88,8 @@ public class ConnectParam {
         if(builder.clientInterceptors != null) {
             this.clientInterceptors.addAll(builder.clientInterceptors);
         }
+
+        this.userName = builder.userName;
     }
 
     public static Builder newBuilder() {
@@ -119,6 +123,11 @@ public class ConnectParam {
         protected boolean secure = false;
         private long idleTimeoutMs = TimeUnit.MILLISECONDS.convert(24, TimeUnit.HOURS);
         private String authorization = Base64.getEncoder().encodeToString("root:milvus".getBytes(StandardCharsets.UTF_8));
+
+        // username/password is encoded into authorization, this member is to keep the origin username for MilvusServiceClient.connect()
+        // The MilvusServiceClient.connect() is to send the client info to the server so that the server knows which client is interacting
+        // If the username is unknown, send it as an empty string.
+        private String userName = "";
 
         protected Builder() {
         }
@@ -230,10 +239,12 @@ public class ConnectParam {
         /**
          * Enables the secure for client channel.
          *
+         * Deprecated from v2.3.6, this flag is auto-detected, no need to specify
+         *
          * @param enable true keep-alive
          * @return <code>Builder</code>
          */
-        @java.lang.Deprecated
+        @Deprecated
         public Builder secure(boolean enable) {
             secure = enable;
             return this;
@@ -273,22 +284,27 @@ public class ConnectParam {
          */
         public Builder withAuthorization(String username, String password) {
             this.authorization = Base64.getEncoder().encodeToString(String.format("%s:%s", username, password).getBytes(StandardCharsets.UTF_8));
+            this.userName = username;
             return this;
         }
 
         /**
          * Sets secure the authorization for this connection, set to True to enable TLS
+         *
+         * Deprecated from v2.3.6, this flag is auto-detected, no need to specify
+         *
          * @param secure boolean
          * @return <code>Builder</code>
          */
+        @Deprecated
         public Builder withSecure(boolean secure) {
             this.secure = secure;
             return this;
         }
 
         /**
-         * Sets the secure for this connection
-         * @param authorization the authorization info that has included the encoded username and password info
+         * Sets the authorization for this connection
+         * @param authorization the encoded authorization info that has included the encoded username and password info
          * @return <code>Builder</code>
          */
         public Builder withAuthorization(@NonNull String authorization) {
@@ -371,6 +387,9 @@ public class ConnectParam {
                 this.host = result.getHostname();
                 this.port = result.getPort();
                 this.databaseName = StringUtils.isNotEmpty(result.getDatabase()) ? result.getDatabase() : this.databaseName;
+                if (Pattern.matches(CLOUD_SERVERLESS_URI_REGEX, this.uri)) {
+                    this.port = 443;
+                }
             }
 
             if(host.startsWith(HOST_HTTPS_PREFIX)){
@@ -379,9 +398,6 @@ public class ConnectParam {
 
             if (StringUtils.isNotEmpty(token)) {
                 this.authorization = Base64.getEncoder().encodeToString(String.format("%s", token).getBytes(StandardCharsets.UTF_8));
-                if (Pattern.matches(CLOUD_SERVERLESS_URI_REGEX, this.uri)) {
-                    this.port = 443;
-                }
             }
 
             if (port < 0 || port > 0xFFFF) {
