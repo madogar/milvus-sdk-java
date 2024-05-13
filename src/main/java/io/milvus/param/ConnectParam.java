@@ -19,6 +19,7 @@
 
 package io.milvus.param;
 
+import io.grpc.ClientInterceptor;
 import io.milvus.exception.ParamException;
 import lombok.Getter;
 import lombok.NonNull;
@@ -26,7 +27,9 @@ import lombok.ToString;
 import org.apache.commons.lang3.StringUtils;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
@@ -57,6 +60,7 @@ public class ConnectParam {
     private final String caPemPath;
     private final String serverPemPath;
     private final String serverName;
+    private final List<ClientInterceptor> clientInterceptors;
 
     protected ConnectParam(@NonNull Builder builder) {
         this.host = builder.host;
@@ -77,6 +81,11 @@ public class ConnectParam {
         this.caPemPath = builder.caPemPath;
         this.serverPemPath = builder.serverPemPath;
         this.serverName = builder.serverName;
+        this.clientInterceptors = new ArrayList<>();
+
+        if(builder.clientInterceptors != null) {
+            this.clientInterceptors.addAll(builder.clientInterceptors);
+        }
     }
 
     public static Builder newBuilder() {
@@ -104,6 +113,8 @@ public class ConnectParam {
         private String caPemPath;
         private String serverPemPath;
         private String serverName;
+
+        private List<ClientInterceptor> clientInterceptors;
 
         protected boolean secure = false;
         private long idleTimeoutMs = TimeUnit.MILLISECONDS.convert(24, TimeUnit.HOURS);
@@ -333,6 +344,11 @@ public class ConnectParam {
          */
         public Builder withServerName(@NonNull String serverName) {
             this.serverName = serverName;
+            return this;
+        }
+
+        public Builder withClientInterceptors(@NonNull List<ClientInterceptor> clientInterceptors) {
+            this.clientInterceptors = clientInterceptors;
             return this;
         }
 
